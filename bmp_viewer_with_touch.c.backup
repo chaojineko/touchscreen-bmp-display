@@ -1,0 +1,575 @@
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+#include <dirent.h>  // 用于读取目录内容
+#include <termios.h> // 用于处理终端设置
+#include <ctype.h>   // 用于字符处理
+#include <time.h>    // 用于延时功能
+#include <linux/input.h>
+#include <math.h>
+#include <pthread.h> // 用于多线程
+
+#define WHITE 0xffffff
+
+// 屏幕宽度和高度
+#define WIDTH 800
+#define HEIGHT 480
+
+// 最大BMP文件数量
+#define MAX_BMP_FILES 100
+
+// 点击区域定义
+#define LEFT_CLICK_AREA (WIDTH / 3)      // 左侧1/3区域为上一张
+#define RIGHT_CLICK_AREA (WIDTH * 2 / 3) // 右侧1/3区域为下一张
+
+// 全局变量
+int refresh_delay = 5;                                     // 行刷新延迟时间(毫秒)
+int use_slow_refresh = 1;                                  // 是否使用逐行刷新模式
+int current_index = 0;                                     // 当前显示的图片索引
+int bmp_count = 0;                                         // BMP文件总数
+char bmp_files[MAX_BMP_FILES][256] = {0};                  // BMP文件列表
+int *map_addr = NULL;                                      // LCD内存映射地址
+int screen_w = WIDTH;                                      // 屏幕宽度
+int screen_h = HEIGHT;                                     // 屏幕高度
+int need_refresh = 0;                                      // 是否需要刷新图片
+pthread_mutex_t refresh_mutex = PTHREAD_MUTEX_INITIALIZER; // 刷新互斥锁
+
+// 毫秒级延时函数
+void delay_ms(int milliseconds)
+{
+    struct timespec ts;
+    ts.tv_sec = milliseconds / 1000;
+    ts.tv_nsec = (milliseconds % 1000) * 1000000;
+    nanosleep(&ts, NULL);
+}
+
+// 获取字符函数（无缓冲输入）
+int getch(void)
+{
+    struct termios old_settings, new_settings;
+    int ch;
+
+    tcgetattr(STDIN_FILENO, &old_settings);
+    new_settings = old_settings;
+    new_settings.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_settings);
+    ch = getchar();
+    tcsetattr(STDIN_FILENO, TCSANOW, &old_settings);
+
+    return ch;
+}
+
+// 检查文件是否为BMP格式
+int is_bmp_file(const char *filename)
+{
+    const char *ext = strrchr(filename, '.');
+    if (ext && strcasecmp(ext, ".bmp") == 0)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+// BMP文件头
+struct bitmap_header
+{
+    int16_t type;          // 文件类型    2
+    int32_t size;          // 图像文件大小 4
+    int16_t reserved1;     // 保留        2
+    int16_t reserved2;     // 保留        2
+    int32_t offbits;       // bmp图像数据偏移量 4
+} __attribute__((packed)); // 不对齐字节,根据数据大小分配
+
+// BMP信息头
+struct bitmap_info
+{
+    int32_t size;   // 本结构体的大小
+    int32_t width;  // 图像宽 👍
+    int32_t height; // 图像高 👍
+    int16_t planes;
+
+    int16_t bit_count; // 色深 👍
+    int32_t compression;
+    int32_t size_img; // bmp数据大小，必须是4的整数倍
+    int32_t X_pel;
+    int32_t Y_pel;
+    int32_t clrused;
+    int32_t clrImportant;
+} __attribute__((packed));
+
+// 显示BMP图片到LCD屏幕
+int display_bmp(const char *filename, int *map_addr, int screen_w, int screen_h)
+{
+    // 1. 打开并读取BMP文件信息
+    FILE *fp = fopen(filename, "r");
+    if (fp == NULL)
+    {
+        perror("打开图片失败");
+        return -1;
+    }
+
+    struct bitmap_header head = {0};
+    if (fread(&head, sizeof(head), 1, fp) != 1)
+    {
+        perror("读取BMP文件头失败");
+        fclose(fp);
+        return -1;
+    }
+
+    if (head.type != 0x4D42)
+    { // 'BM'
+        fprintf(stderr, "不是一个有效的BMP文件\n");
+        fclose(fp);
+        return -1;
+    }
+
+    struct bitmap_info info = {0};
+    if (fread(&info, sizeof(info), 1, fp) != 1)
+    {
+        perror("读取BMP信息头失败");
+        fclose(fp);
+        return -1;
+    }
+
+    printf("图片信息: %s\n", filename);
+    printf("宽度: %d, 高度: %d, 色深: %d\n", info.width, info.height, info.bit_count);
+
+    if (info.bit_count != 24 && info.bit_count != 32)
+    {
+        fprintf(stderr, "不支持的色深: %d, 只支持24位和32位\n", info.bit_count);
+        fclose(fp);
+        return -1;
+    }
+
+    // 2. 读取BMP像素数据
+    int bytes_per_pixel = info.bit_count / 8;
+    int row_size = ((info.width * bytes_per_pixel + 3) / 4) * 4; // 4字节对齐的行大小
+    int image_size = row_size * abs(info.height);
+
+    char *bgr_buf = malloc(image_size);
+    if (bgr_buf == NULL)
+    {
+        perror("为BMP数据分配内存失败");
+        fclose(fp);
+        return -1;
+    }
+
+    fseek(fp, head.offbits, SEEK_SET);
+    if (fread(bgr_buf, 1, image_size, fp) != image_size)
+    {
+        perror("读取BMP像素数据失败");
+        free(bgr_buf);
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+
+    // 3. 转换像素并写入屏幕内存
+    int w = info.width;
+    int h = abs(info.height);
+
+    // 确定要绘制的区域大小（防止图片超出屏幕）
+    int draw_w = (w < screen_w) ? w : screen_w;
+    int draw_h = (h < screen_h) ? h : screen_h;
+
+    // 清屏为黑色
+    memset(map_addr, 0, screen_w * screen_h * sizeof(int));
+
+    // 根据模式选择显示方式
+    if (use_slow_refresh)
+    {
+        printf("正在逐行加载图片...\n");
+
+        // 逐行显示图片，并添加延迟
+        for (int y = 0; y < draw_h; y++)
+        {
+            for (int x = 0; x < draw_w; x++)
+            {
+                int bmp_y = (info.height > 0) ? (h - 1 - y) : y; // 处理垂直翻转
+                char *src_pixel = bgr_buf + bmp_y * row_size + x * bytes_per_pixel;
+                int *dst_pixel = map_addr + y * screen_w + x;
+
+                // 将BGR(A)转换为ARGB
+                char b = src_pixel[0];
+                char g = src_pixel[1];
+                char r = src_pixel[2];
+                *dst_pixel = (0 << 24) | (r << 16) | (g << 8) | b;
+            }
+
+            // 每显示一行后延迟
+            if (refresh_delay > 0)
+            {
+                delay_ms(refresh_delay);
+            }
+
+            // 每10行输出一次进度
+            if (y % 10 == 0 || y == draw_h - 1)
+            {
+                printf("\r加载进度: %.1f%%", (float)(y + 1) * 100 / draw_h);
+                fflush(stdout);
+            }
+        }
+        printf("\n图片加载完成!\n");
+    }
+    else
+    {
+        // 直接显示整张图片（无延迟）
+        printf("直接加载整张图片...\n");
+        for (int y = 0; y < draw_h; y++)
+        {
+            for (int x = 0; x < draw_w; x++)
+            {
+                int bmp_y = (info.height > 0) ? (h - 1 - y) : y; // 处理垂直翻转
+                char *src_pixel = bgr_buf + bmp_y * row_size + x * bytes_per_pixel;
+                int *dst_pixel = map_addr + y * screen_w + x;
+
+                // 将BGR(A)转换为ARGB
+                char b = src_pixel[0];
+                char g = src_pixel[1];
+                char r = src_pixel[2];
+                *dst_pixel = (0 << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+        printf("图片加载完成!\n");
+    }
+
+    free(bgr_buf);
+    return 0;
+}
+
+// 显示下一张图片
+void show_next_image()
+{
+    pthread_mutex_lock(&refresh_mutex);
+    current_index = (current_index + 1) % bmp_count;
+    printf("显示下一张图片 (%d/%d): %s\n", current_index + 1, bmp_count, bmp_files[current_index]);
+    if (display_bmp(bmp_files[current_index], map_addr, screen_w, screen_h) < 0)
+    {
+        printf("显示图片失败，尝试下一张\n");
+    }
+    pthread_mutex_unlock(&refresh_mutex);
+}
+
+// 显示上一张图片
+void show_prev_image()
+{
+    pthread_mutex_lock(&refresh_mutex);
+    current_index = (current_index - 1 + bmp_count) % bmp_count;
+    printf("显示上一张图片 (%d/%d): %s\n", current_index + 1, bmp_count, bmp_files[current_index]);
+    if (display_bmp(bmp_files[current_index], map_addr, screen_w, screen_h) < 0)
+    {
+        printf("显示图片失败，尝试上一张\n");
+    }
+    pthread_mutex_unlock(&refresh_mutex);
+}
+
+// 切换显示模式
+void toggle_refresh_mode()
+{
+    pthread_mutex_lock(&refresh_mutex);
+    use_slow_refresh = !use_slow_refresh;
+    printf("切换显示模式为: %s\n", use_slow_refresh ? "逐行显示" : "快速显示");
+    printf("重新加载图片以应用新设置...\n");
+    if (display_bmp(bmp_files[current_index], map_addr, screen_w, screen_h) < 0)
+    {
+        printf("重新加载图片失败\n");
+    }
+    pthread_mutex_unlock(&refresh_mutex);
+}
+
+// 触摸屏处理线程
+void *touch_handler(void *arg)
+{
+    // 打开触摸屏设备
+    int fd = open("/dev/input/event0", O_RDONLY);
+    if (fd < 0)
+    {
+        perror("打开触摸屏设备失败");
+        return NULL;
+    }
+
+    struct input_event event;
+    int touch_start_x = 0, touch_start_y = 0; // 触摸开始时的坐标
+    int current_x = 0, current_y = 0;         // 当前坐标
+    int touch_pressed = 0;                    // 触摸状态标志
+
+    printf("触摸屏处理线程已启动\n");
+
+    while (1)
+    {
+        int ret = read(fd, &event, sizeof(event));
+        if (ret < 0)
+        {
+            perror("读取触摸事件失败");
+            break;
+        }
+
+        // 处理输入模型数据
+        if (event.type == EV_ABS && event.code == ABS_X)
+        {
+            current_x = event.value * 800 / 1024;
+        }
+        else if (event.type == EV_ABS && event.code == ABS_Y)
+        {
+            current_y = event.value * 480 / 600;
+        }
+        else if (event.type == EV_KEY && event.code == BTN_TOUCH)
+        {
+            if (event.value == 1)
+            {
+                printf("触摸屏被触摸在坐标: (%d, %d)\n", current_x, current_y);
+                touch_start_x = current_x;
+                touch_start_y = current_y;
+                touch_pressed = 1;
+            }
+            else if (event.value == 0)
+            {
+                printf("触摸屏释放\n");
+                printf("起始坐标: (%d, %d), 结束坐标: (%d, %d)\n",
+                       touch_start_x, touch_start_y, current_x, current_y);
+
+                // 计算滑动距离
+                int dx = current_x - touch_start_x;
+                int dy = current_y - touch_start_y;
+
+                // 判断是滑动还是点击
+                if (abs(dx) > 100 || abs(dy) > 100)
+                {
+                    // 滑动操作
+                    if (abs(dx) > abs(dy))
+                    {
+                        // 水平滑动
+                        if (dx > 100)
+                        {
+                            printf("触摸屏向右滑动 - 显示上一张图片\n");
+                            show_prev_image();
+                        }
+                        else if (dx < -100)
+                        {
+                            printf("触摸屏向左滑动 - 显示下一张图片\n");
+                            show_next_image();
+                        }
+                    }
+                    else
+                    {
+                        // 垂直滑动 - 切换显示模式
+                        if (abs(dy) > 100)
+                        {
+                            printf("触摸屏上下滑动 - 切换显示模式\n");
+                            toggle_refresh_mode();
+                        }
+                    }
+                }
+                else
+                {
+                    // 点击操作
+                    if (touch_start_x < LEFT_CLICK_AREA)
+                    {
+                        printf("点击屏幕左侧 - 显示上一张图片\n");
+                        show_prev_image();
+                    }
+                    else if (touch_start_x > RIGHT_CLICK_AREA)
+                    {
+                        printf("点击屏幕右侧 - 显示下一张图片\n");
+                        show_next_image();
+                    }
+                    else
+                    {
+                        printf("点击屏幕中间区域\n");
+                        // 中间区域可以用于其他功能，比如显示信息
+                    }
+                }
+                touch_pressed = 0;
+            }
+        }
+    }
+
+    close(fd);
+    return NULL;
+}
+
+int main()
+{
+    // 1. 扫描当前目录下的所有BMP文件
+    DIR *dir;
+    struct dirent *entry;
+
+    dir = opendir(".");
+    if (!dir)
+    {
+        perror("无法打开当前目录");
+        return -1;
+    }
+
+    printf("扫描当前目录的BMP文件...\n");
+    while ((entry = readdir(dir)) != NULL && bmp_count < MAX_BMP_FILES)
+    {
+        if (is_bmp_file(entry->d_name))
+        {
+            strncpy(bmp_files[bmp_count], entry->d_name, 255);
+            bmp_files[bmp_count][255] = '\0'; // 确保字符串结束
+            printf("找到BMP文件: %s\n", bmp_files[bmp_count]);
+            bmp_count++;
+        }
+    }
+    closedir(dir);
+
+    if (bmp_count == 0)
+    {
+        printf("当前目录下没有找到任何BMP文件\n");
+        return -1;
+    }
+
+    printf("共找到 %d 个BMP文件\n", bmp_count);
+
+    // 2. 打开并映射LCD屏幕
+    int lcd_fd = open("/dev/fb0", O_RDWR);
+    if (lcd_fd == -1)
+    {
+        perror("打开LCD失败");
+        return -1;
+    }
+
+    int screen_bpp = 4;
+    long screen_size = screen_w * screen_h * screen_bpp;
+
+    map_addr = mmap(NULL, screen_size, PROT_READ | PROT_WRITE, MAP_SHARED, lcd_fd, 0);
+    if (map_addr == MAP_FAILED)
+    {
+        perror("映射LCD内存失败");
+        close(lcd_fd);
+        return -1;
+    }
+
+    // 3. 显示第一张图片
+    current_index = 0;
+    if (display_bmp(bmp_files[current_index], map_addr, screen_w, screen_h) < 0)
+    {
+        printf("显示初始图片失败\n");
+    }
+
+    // 4. 启动触摸屏处理线程
+    pthread_t touch_thread;
+    if (pthread_create(&touch_thread, NULL, touch_handler, NULL) != 0)
+    {
+        perror("创建触摸屏处理线程失败");
+        munmap(map_addr, screen_size);
+        close(lcd_fd);
+        return -1;
+    }
+
+    // 5. 主循环 - 处理键盘输入
+    printf("\n");
+    printf("======== 控制说明 ========\n");
+    printf("键盘控制:\n");
+    printf("  n/N: 下一张图片\n");
+    printf("  p/P: 上一张图片\n");
+    printf("  +: 增加刷新延迟（显示变慢）\n");
+    printf("  -: 减少刷新延迟（显示变快）\n");
+    printf("  0-9: 直接设置刷新速度（0最快，9最慢）\n");
+    printf("  s/S: 切换显示模式（%s）\n", use_slow_refresh ? "当前:逐行显示" : "当前:快速显示");
+    printf("  r/R: 重新加载当前图片\n");
+    printf("  q/Q/ESC: 退出程序\n");
+    printf("触摸屏控制:\n");
+    printf("  点击左侧1/3区域: 上一张图片\n");
+    printf("  点击右侧1/3区域: 下一张图片\n");
+    printf("  左滑: 下一张图片\n");
+    printf("  右滑: 上一张图片\n");
+    printf("  上下滑: 切换显示模式\n");
+    printf("当前刷新延迟: %d 毫秒/行\n", refresh_delay);
+    printf("========================\n");
+
+    int ch;
+    int running = 1;
+
+    while (running)
+    {
+        ch = getch();
+
+        switch (ch)
+        {
+        case 'n':
+        case 'N':
+        case '\n': // 回车键
+            show_next_image();
+            break;
+
+        case 'p':
+        case 'P':
+            show_prev_image();
+            break;
+
+        case 'q':
+        case 'Q':
+        case 27: // ESC键
+            printf("退出程序\n");
+            running = 0;
+            break;
+
+        // 调节显示速度
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+            refresh_delay = (ch - '0') * 10; // 设置为对应的毫秒数
+            printf("设置行刷新延迟时间为: %d 毫秒/行\n", refresh_delay);
+            break;
+
+        case '+': // 增加延迟（变慢）
+            refresh_delay += 5;
+            if (refresh_delay > 200)
+                refresh_delay = 200; // 设置上限
+            printf("增加延迟 - 当前刷新延迟: %d 毫秒/行\n", refresh_delay);
+            break;
+
+        case '-': // 减少延迟（变快）
+            refresh_delay -= 5;
+            if (refresh_delay < 0)
+                refresh_delay = 0; // 确保不为负
+            printf("减少延迟 - 当前刷新延迟: %d 毫秒/行\n", refresh_delay);
+            break;
+
+        case 'r':
+        case 'R': // 重新加载当前图片
+            printf("重新加载图片: %s\n", bmp_files[current_index]);
+            pthread_mutex_lock(&refresh_mutex);
+            if (display_bmp(bmp_files[current_index], map_addr, screen_w, screen_h) < 0)
+            {
+                printf("重新加载图片失败\n");
+            }
+            pthread_mutex_unlock(&refresh_mutex);
+            break;
+
+        case 's':
+        case 'S': // 切换显示模式
+            toggle_refresh_mode();
+            break;
+
+        default:
+            // 忽略其他键
+            break;
+        }
+    }
+
+    // 6. 清理资源
+    // 等待触摸屏线程结束（实际上它是无限循环，所以这里会一直等待）
+    // pthread_join(touch_thread, NULL);
+
+    munmap(map_addr, screen_size);
+    close(lcd_fd);
+    pthread_mutex_destroy(&refresh_mutex);
+
+    return 0;
+}

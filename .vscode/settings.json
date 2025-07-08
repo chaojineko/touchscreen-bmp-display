@@ -1,0 +1,9 @@
+{
+    "files.associations": {
+        "*.rust": "rust",
+        "math.h": "c",
+        "time.h": "c"
+    },
+    "C_Cpp.errorSquiggles": "disabled",
+    "C_Cpp.default.compilerPath": "C:/Program Files/cygwin64/bin/gcc.exe"
+}
