@@ -1,6 +1,12 @@
 # BMP图片查看器 - 模块化版本
 # 编译器和编译选项
-CC = gcc
+# 默认为本机编译器
+CC ?= gcc
+# 交叉编译器设置
+CROSS_COMPILE ?= arm-linux-
+ARM_CC = $(CROSS_COMPILE)gcc
+
+# 编译标志
 CFLAGS = -Wall -Wextra -std=c99 -pthread
 LDFLAGS = -pthread -lm
 
@@ -31,6 +37,12 @@ INCLUDES = -I$(INC_DIR)
 
 # 默认目标
 all: $(TARGET)
+
+# ARM交叉编译目标
+arm: CC=$(ARM_CC)
+arm: CFLAGS += -DARM_BUILD
+arm: $(TARGET)
+	@echo "ARM交叉编译完成: $(TARGET)"
 
 # 创建目录
 $(OBJ_DIR):
@@ -88,7 +100,8 @@ run: $(TARGET)
 # 帮助
 help:
 	@echo "可用目标:"
-	@echo "  all      - 编译程序 (默认)"
+	@echo "  all      - 编译程序 (默认使用主机gcc)"
+	@echo "  arm      - 使用ARM交叉编译器编译"
 	@echo "  clean    - 清理生成的文件"
 	@echo "  debug    - 编译调试版本"
 	@echo "  release  - 编译发布版本"
@@ -96,5 +109,10 @@ help:
 	@echo "  check    - 代码风格检查"
 	@echo "  run      - 编译并运行程序"
 	@echo "  help     - 显示此帮助信息"
+	@echo ""
+	@echo "交叉编译选项:"
+	@echo "  make arm                             - 使用默认的arm-linux-gcc交叉编译器"
+	@echo "  make arm CROSS_COMPILE=arm-none-eabi- - 指定其他交叉编译器前缀"
+	@echo ""
 
-.PHONY: all clean install debug release check run help version docs tests
+.PHONY: all arm clean install debug release check run help version docs tests
