@@ -73,6 +73,96 @@ make arm CROSS_COMPILE=arm-poky-linux-gnueabi-
 make arm CFLAGS="-O3 -march=armv7-a -mfpu=neon"
 ```
 
+## 直接使用编译器命令（手动编译）
+
+如果您习惯使用类似于 `arm-gcc filename.c -o filename` 这样的简单命令编译程序，您也可以直接编译这个项目：
+
+### 单文件编译方式
+
+对于简单的程序，您可以直接编译：
+
+```bash
+# 切换到项目目录
+cd /path/to/bmp_viewer
+
+# 使用您习惯的交叉编译器编译单个文件
+arm-linux-gcc main.c -o bmp_viewer
+
+# 或者指定完整的编译器路径
+/path/to/arm-linux-gcc main.c -o bmp_viewer
+```
+
+### 多文件手动编译
+
+由于这个BMP查看器是一个模块化的项目，包含多个源文件，您需要将所有文件一起编译：
+
+```bash
+# 切换到项目目录
+cd /path/to/bmp_viewer
+
+# 编译所有源文件
+arm-linux-gcc main.c src/*.c -Iinclude -pthread -lm -o bmp_viewer
+```
+
+### 使用命令行参数
+
+完整的手动编译命令示例：
+
+```bash
+arm-linux-gcc main.c src/*.c -Iinclude -pthread -lm -o bmp_viewer \
+  -Wall -O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard
+```
+
+命令说明：
+- `main.c src/*.c`: 编译主文件和src目录下的所有源文件
+- `-Iinclude`: 添加include目录到包含路径
+- `-pthread`: 启用POSIX线程支持
+- `-lm`: 链接数学库
+- `-o bmp_viewer`: 指定输出文件名
+- `-Wall`: 启用所有警告
+- `-O2`: 优化级别2
+- `-march=armv7-a -mfpu=neon -mfloat-abi=hard`: ARM架构相关选项
+
+## 使用简单编译脚本
+
+为了方便像您习惯的简单编译方式，我们提供了一个简化的编译脚本 `simple_compile.sh`：
+
+```bash
+# 切换到项目目录
+cd /path/to/bmp_viewer
+
+# 默认使用arm-linux-gcc编译
+./simple_compile.sh
+
+# 或者指定其他编译器
+./simple_compile.sh arm-linux-gnueabihf-gcc
+
+# 或者指定编译器的完整路径
+./simple_compile.sh /opt/toolchain/bin/arm-none-eabi-gcc
+```
+
+这个脚本会用单个命令编译整个项目，类似于您之前使用的方式。
+
+### Windows环境下的简易编译方法
+
+如果您在Windows的WSL环境中进行开发，我们还提供了一个针对Windows优化的简易编译脚本：
+
+```bash
+# 切换到项目目录
+cd /mnt/c/Users/13753/Desktop/CODE/文件io/触摸屏/bmp_viewer
+
+# 使用默认编译器
+./win_simple_compile.sh
+
+# 或指定编译器
+./win_simple_compile.sh arm-linux-gnueabihf-gcc
+
+# 查看帮助
+./win_simple_compile.sh --help
+```
+
+这个脚本适合在WSL环境下使用，提供彩色输出和更友好的提示信息。
+
 ## 部署到目标设备
 
 编译完成后，二进制文件将位于`bin/bmp_viewer`。您需要将此文件以及任何配置文件（如`config.conf`）传输到目标设备。
