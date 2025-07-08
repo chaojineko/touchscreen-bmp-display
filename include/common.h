@@ -1,7 +1,7 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#define _GNU_SOURCE  // 启用GNU扩展，包括strcasecmp
+#define _GNU_SOURCE // 启用GNU扩展，包括strcasecmp
 
 #include <stdio.h>
 #include <stdint.h>
@@ -12,7 +12,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
-#include <strings.h>  // 包含strcasecmp声明
+#include <strings.h> // 包含strcasecmp声明
 #include <dirent.h>
 #include <termios.h>
 #include <ctype.h>
@@ -44,7 +44,8 @@
 #define ERROR -1
 
 // 应用程序状态结构
-typedef struct {
+typedef struct
+{
     int refresh_delay;
     int use_slow_refresh;
     int current_index;

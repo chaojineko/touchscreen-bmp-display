@@ -4,7 +4,8 @@
 #include "common.h"
 
 // 配置结构
-typedef struct {
+typedef struct
+{
     int screen_width;
     int screen_height;
     int default_refresh_delay;

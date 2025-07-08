@@ -4,7 +4,8 @@
 #include "common.h"
 
 // LCD控制结构
-typedef struct {
+typedef struct
+{
     int fd;
     int *map_addr;
     int width;

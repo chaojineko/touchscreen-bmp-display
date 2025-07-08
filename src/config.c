@@ -14,14 +14,14 @@ config_t g_config = {
     .lcd_device = "/dev/fb0",
     .bits_per_pixel = 32,
     .debug_mode = 0,
-    .verbose_output = 1
-};
+    .verbose_output = 1};
 
 // 加载配置文件
 int load_config(const char *config_file)
 {
     FILE *fp = fopen(config_file, "r");
-    if (!fp) {
+    if (!fp)
+    {
         printf("配置文件 %s 不存在，使用默认配置\n", config_file);
         // 创建一个默认配置文件
         save_default_config(config_file);
@@ -31,55 +31,89 @@ int load_config(const char *config_file)
     char line[256];
     char key[64], value[192];
 
-    while (fgets(line, sizeof(line), fp)) {
+    while (fgets(line, sizeof(line), fp))
+    {
         // 跳过注释和空行
-        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') {
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r')
+        {
             continue;
         }
 
         // 解析key=value对
-        if (sscanf(line, "%63[^=]=%191[^\n]", key, value) == 2) {
+        if (sscanf(line, "%63[^=]=%191[^\n]", key, value) == 2)
+        {
             // 去除首尾空格
             char *k = key;
-            while (*k && isspace(*k)) k++;
+            while (*k && isspace(*k))
+                k++;
             char *end = k + strlen(k) - 1;
-            while (end > k && isspace(*end)) *end-- = '\0';
+            while (end > k && isspace(*end))
+                *end-- = '\0';
 
             char *v = value;
-            while (*v && isspace(*v)) v++;
+            while (*v && isspace(*v))
+                v++;
             end = v + strlen(v) - 1;
-            while (end > v && isspace(*end)) *end-- = '\0';
+            while (end > v && isspace(*end))
+                *end-- = '\0';
 
             // 设置配置项
-            if (strcmp(k, "screen_width") == 0) {
+            if (strcmp(k, "screen_width") == 0)
+            {
                 g_config.screen_width = atoi(v);
-            } else if (strcmp(k, "screen_height") == 0) {
+            }
+            else if (strcmp(k, "screen_height") == 0)
+            {
                 g_config.screen_height = atoi(v);
-            } else if (strcmp(k, "default_refresh_delay") == 0) {
+            }
+            else if (strcmp(k, "default_refresh_delay") == 0)
+            {
                 g_config.default_refresh_delay = atoi(v);
-            } else if (strcmp(k, "use_slow_refresh") == 0) {
+            }
+            else if (strcmp(k, "use_slow_refresh") == 0)
+            {
                 g_config.use_slow_refresh = atoi(v);
-            } else if (strcmp(k, "max_bmp_files") == 0) {
+            }
+            else if (strcmp(k, "max_bmp_files") == 0)
+            {
                 g_config.max_bmp_files = atoi(v);
-            } else if (strcmp(k, "scan_subdirectories") == 0) {
+            }
+            else if (strcmp(k, "scan_subdirectories") == 0)
+            {
                 g_config.scan_subdirectories = atoi(v);
-            } else if (strcmp(k, "touch_device") == 0) {
+            }
+            else if (strcmp(k, "touch_device") == 0)
+            {
                 strncpy(g_config.touch_device, v, sizeof(g_config.touch_device) - 1);
                 g_config.touch_device[sizeof(g_config.touch_device) - 1] = '\0';
-            } else if (strcmp(k, "swipe_threshold") == 0) {
+            }
+            else if (strcmp(k, "swipe_threshold") == 0)
+            {
                 g_config.swipe_threshold = atoi(v);
-            } else if (strcmp(k, "enable_touch") == 0) {
+            }
+            else if (strcmp(k, "enable_touch") == 0)
+            {
                 g_config.enable_touch = atoi(v);
-            } else if (strcmp(k, "lcd_device") == 0) {
+            }
+            else if (strcmp(k, "lcd_device") == 0)
+            {
                 strncpy(g_config.lcd_device, v, sizeof(g_config.lcd_device) - 1);
                 g_config.lcd_device[sizeof(g_config.lcd_device) - 1] = '\0';
-            } else if (strcmp(k, "bits_per_pixel") == 0) {
+            }
+            else if (strcmp(k, "bits_per_pixel") == 0)
+            {
                 g_config.bits_per_pixel = atoi(v);
-            } else if (strcmp(k, "debug_mode") == 0) {
+            }
+            else if (strcmp(k, "debug_mode") == 0)
+            {
                 g_config.debug_mode = atoi(v);
-            } else if (strcmp(k, "verbose_output") == 0) {
+            }
+            else if (strcmp(k, "verbose_output") == 0)
+            {
                 g_config.verbose_output = atoi(v);
-            } else {
+            }
+            else
+            {
                 printf("未知配置项: %s = %s\n", k, v);
             }
         }
@@ -114,7 +148,8 @@ void print_config(void)
 void save_default_config(const char *config_file)
 {
     FILE *fp = fopen(config_file, "w");
-    if (!fp) {
+    if (!fp)
+    {
         perror("无法创建默认配置文件");
         return;
     }

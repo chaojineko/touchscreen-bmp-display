@@ -4,7 +4,8 @@
 #include "common.h"
 
 // 触摸事件类型
-typedef enum {
+typedef enum
+{
     TOUCH_EVENT_NONE,
     TOUCH_EVENT_PREV,
     TOUCH_EVENT_NEXT,
@@ -12,13 +13,15 @@ typedef enum {
 } touch_event_t;
 
 // 触摸坐标结构
-typedef struct {
+typedef struct
+{
     int x;
     int y;
 } touch_point_t;
 
 // 触摸状态结构
-typedef struct {
+typedef struct
+{
     int fd;
     touch_point_t start_pos;
     touch_point_t current_pos;

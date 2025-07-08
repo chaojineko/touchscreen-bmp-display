@@ -10,8 +10,7 @@ app_state_t g_app_state = {
     .screen_w = WIDTH,
     .screen_h = HEIGHT,
     .running = 1,
-    .refresh_mutex = PTHREAD_MUTEX_INITIALIZER
-};
+    .refresh_mutex = PTHREAD_MUTEX_INITIALIZER};
 
 // 毫秒级延时函数
 void delay_ms(int milliseconds)
